@@ -1,39 +1,41 @@
 package main
 
 import (
-	"net/http"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"github.com/boltdb/bolt"
-	"time"
 	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/boltdb/bolt"
+	"github.com/jasonlvhit/gocron"
 )
 
 //API_URL Base url for Api calls
 const (
-	API_URL string = "http://torpedo.servegame.com:3000"
+	API_URL          string = "http://torpedo.servegame.com:3000"
 	BOLT_BUCKET_NAME string = "songs"
-	BOLT_DB_FILE = "songs.db"
+	BOLT_DB_FILE            = "songs.db"
 )
 
 //TopSongResp Response for receiving top billboard song /getTopSongs
 type TopSongResp struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
 	Artist string `json:"artist"`
 }
 
 //SongResp Response received when /v2/download/:query is done
 type SongResp struct {
-	Success bool `json:"success`
-	Url string `json:"url"`
+	Success bool   `json:"success`
+	Url     string `json:"url"`
 }
 
 //SongInfo overall data collected for a particular song
 type SongInfo struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
 	Artist string `json:"artist"`
-	Url string `json:"url"`
+	Url    string `json:"url"`
 }
 
 // get top billboard songs
@@ -51,9 +53,9 @@ func getTopSongs() ([]TopSongResp, error) {
 
 	err = decoder.Decode(&songs)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
-	
+
 	return songs, nil
 }
 
@@ -63,15 +65,15 @@ func cleanArgs(arg *string) {
 }
 
 // use /v2/download to download a song to s3
-func downloadToS3(song *TopSongResp) (*SongInfo, error) {
-	log.Println("Initiate search and download to s3")
+func downloadToS3(song *TopSongResp, songChan chan SongInfo) {
+	log.Println("Initiate search and download to s3 for " + song.Name)
 
-	cleanArgs(&song.Artist);
+	cleanArgs(&song.Artist)
 
 	query := song.Name + song.Artist
 	res, err := http.Get(API_URL + "/v2/download/" + query)
 	if err != nil {
-		return nil, err
+		fmt.Println("Error " + err.Error())
 	}
 	defer res.Body.Close()
 
@@ -79,8 +81,8 @@ func downloadToS3(song *TopSongResp) (*SongInfo, error) {
 	var songResp SongResp
 
 	err = decoder.Decode(&songResp)
-	if err != nil && songResp.Success == false{
-		return nil, err
+	if err != nil && songResp.Success == false {
+		fmt.Println("Error " + err.Error())
 	}
 
 	var s SongInfo
@@ -88,12 +90,12 @@ func downloadToS3(song *TopSongResp) (*SongInfo, error) {
 	s.Artist = song.Artist
 	s.Url = songResp.Url
 
-	return &s, nil
+	songChan <- s
 }
 
 // Save the song in the db
 func persist(song *SongInfo, db *bolt.DB) error {
-	log.Println("Saving the song in db")
+	log.Println("Saving the song in db " + song.Name)
 
 	return db.Batch(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(BOLT_BUCKET_NAME))
@@ -124,7 +126,7 @@ func getTopSongUrl(db *bolt.DB) ([]SongInfo, error) {
 			var song SongInfo
 			err := json.Unmarshal(v, &song)
 			if err != nil {
-				fmt.Println("Error decoding db value for key " + string(k) )
+				fmt.Println("Error decoding db value for key " + string(k))
 			}
 
 			songs = append(songs, song)
@@ -136,6 +138,7 @@ func getTopSongUrl(db *bolt.DB) ([]SongInfo, error) {
 	return songs, err
 }
 
+// perform billboard mgmt
 func updateBillBoardData(db *bolt.DB) error {
 	log.Println("Starting billboard update")
 
@@ -143,45 +146,48 @@ func updateBillBoardData(db *bolt.DB) error {
 		return tx.DeleteBucket([]byte(BOLT_BUCKET_NAME))
 	})
 	if err != nil {
-		return err
+		panic(err.Error())
 	}
 	log.Println("Existing data deleted")
 
-	songs, err := getTopSongs();
+	songs, err := getTopSongs()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	for _, song := range songs  {
-		song, err := downloadToS3(&song)
-		if err != nil {
-			fmt.Errorf("%s Download Error occured for %s", err.Error(), song.Name)
-		}
+	songChan := make(chan  SongInfo, 100)
 
-		err = persist(song, db)
-		if err != nil {
-			fmt.Errorf("%s Persist Error occured for %s", err.Error(), song.Name)
+	go func() {
+		for _, song := range songs {
+			downloadToS3(&song, songChan)
 		}
-		break
+		close(songChan)
+	}()
+
+	for song := range songChan {
+		go persist(&song, db)
 	}
 
 	log.Println("Finished billboard update")
 	return nil
 }
 
+func scheduleCron (db *bolt.DB) {
+	log.Println("Scheduling CRON Job")
+	gocron.Every(1).Minute().Do(updateBillBoardData, db)
+	<-gocron.Start()
+}
+
 func main() {
-	db,err := bolt.Open(BOLT_DB_FILE, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	db, err := bolt.Open(BOLT_DB_FILE, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		panic(err.Error())
 	}
 	defer db.Close()
 
-	err = updateBillBoardData(db)
-	if err != nil {
-		log.Println("Error updating billboard data " + err.Error())
-	}
+	updateBillBoardData(db)
 
-	http.HandleFunc("/billboard", func (w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/billboard", func(w http.ResponseWriter, r *http.Request) {
 		songs, err := getTopSongUrl(db)
 		if err != nil {
 			json.NewEncoder(w).Encode(err)
@@ -189,5 +195,10 @@ func main() {
 
 		json.NewEncoder(w).Encode(songs)
 	})
-	http.ListenAndServe(":8000", nil)
+
+	log.Println("Server starting on port :8000 and route /billboard")
+	err = http.ListenAndServe(":8000", nil)
+	if err != nil {
+		panic(err.Error())
+	}
 }
