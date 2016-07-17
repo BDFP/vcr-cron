@@ -185,6 +185,11 @@ func main() {
 	}
 	defer db.Close()
 
+	db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(BOLT_BUCKET_NAME))
+		return err
+	})
+
 	go updateBillBoardData(db)
 	go scheduleCron(db)
 
