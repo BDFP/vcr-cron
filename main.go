@@ -7,6 +7,7 @@ import (
 	"strings"
 	"github.com/boltdb/bolt"
 	"time"
+	"log"
 )
 
 //API_URL Base url for Api calls
@@ -37,6 +38,8 @@ type SongInfo struct {
 
 // get top billboard songs
 func getTopSongs() ([]TopSongResp, error) {
+	log.Println("Retreiving top billboard songs")
+
 	res, err := http.Get(API_URL + "/getTopSongs")
 	if err != nil {
 		return nil, err
@@ -61,6 +64,8 @@ func cleanArgs(arg *string) {
 
 // use /v2/download to download a song to s3
 func downloadToS3(song *TopSongResp) (*SongInfo, error) {
+	log.Println("Initiate search and download to s3")
+
 	cleanArgs(&song.Artist);
 
 	query := song.Name + song.Artist
@@ -88,6 +93,8 @@ func downloadToS3(song *TopSongResp) (*SongInfo, error) {
 
 // Save the song in the db
 func persist(song *SongInfo, db *bolt.DB) error {
+	log.Println("Saving the song in db")
+
 	return db.Batch(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(BOLT_BUCKET_NAME))
 		if err != nil {
@@ -129,7 +136,17 @@ func getTopSongUrl(db *bolt.DB) ([]SongInfo, error) {
 	return songs, err
 }
 
-func updateBillBoardData(db *bolt.DB) {
+func updateBillBoardData(db *bolt.DB) error {
+	log.Println("Starting billboard update")
+
+	err := db.Update(func(tx *bolt.Tx) error {
+		return tx.DeleteBucket([]byte(BOLT_BUCKET_NAME))
+	})
+	if err != nil {
+		return err
+	}
+	log.Println("Existing data deleted")
+
 	songs, err := getTopSongs();
 	if err != nil {
 		panic(err.Error())
@@ -147,6 +164,9 @@ func updateBillBoardData(db *bolt.DB) {
 		}
 		break
 	}
+
+	log.Println("Finished billboard update")
+	return nil
 }
 
 func main() {
@@ -156,7 +176,10 @@ func main() {
 	}
 	defer db.Close()
 
-	updateBillBoardData(db)
+	err = updateBillBoardData(db)
+	if err != nil {
+		log.Println("Error updating billboard data " + err.Error())
+	}
 
 	http.HandleFunc("/billboard", func (w http.ResponseWriter, r *http.Request) {
 		songs, err := getTopSongUrl(db)
