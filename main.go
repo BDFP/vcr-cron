@@ -174,7 +174,7 @@ func updateBillBoardData(db *bolt.DB) error {
 
 func scheduleCron (db *bolt.DB) {
 	log.Println("Scheduling CRON Job")
-	gocron.Every(1).Minute().Do(updateBillBoardData, db)
+	gocron.Every(1).Wednesday().Do(updateBillBoardData, db)
 	<-gocron.Start()
 }
 
@@ -185,7 +185,8 @@ func main() {
 	}
 	defer db.Close()
 
-	updateBillBoardData(db)
+	go updateBillBoardData(db)
+	go scheduleCron(db)
 
 	http.HandleFunc("/billboard", func(w http.ResponseWriter, r *http.Request) {
 		songs, err := getTopSongUrl(db)
