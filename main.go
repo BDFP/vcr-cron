@@ -38,6 +38,13 @@ type SongInfo struct {
 	Url    string `json:"url"`
 }
 
+//Playlist response on /playlist
+type Playlist struct  {
+	Name string `json:"name"`
+	Author string `json:"author"`
+	Url string `json:"url"`
+}
+
 // get top billboard songs
 func getTopSongs() ([]TopSongResp, error) {
 	log.Println("Retreiving top billboard songs")
@@ -174,7 +181,7 @@ func updateBillBoardData(db *bolt.DB) error {
 
 func scheduleCron (db *bolt.DB) {
 	log.Println("Scheduling CRON Job")
-	gocron.Every(1).Wednesday().Do(updateBillBoardData, db)
+	gocron.Every(1).Day().Do(updateBillBoardData, db)
 	<-gocron.Start()
 }
 
@@ -200,6 +207,16 @@ func main() {
 		}
 
 		json.NewEncoder(w).Encode(songs)
+	})
+
+	http.HandleFunc("/playlist",func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]Playlist{
+			Playlist{
+				Name: "Billboard Hot 100",
+				Author: "Billboard",
+				Url: "/billboard",
+			},
+		})
 	})
 
 	log.Println("Server starting on port :8000 and route /billboard")
