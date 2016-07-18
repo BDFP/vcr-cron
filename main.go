@@ -10,6 +10,7 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/jasonlvhit/gocron"
+	"github.com/julienschmidt/httprouter"
 )
 
 //API_URL Base url for Api calls
@@ -39,10 +40,10 @@ type SongInfo struct {
 }
 
 //Playlist response on /playlist
-type Playlist struct  {
-	Name string `json:"name"`
+type Playlist struct {
+	Name   string `json:"name"`
 	Author string `json:"author"`
-	Url string `json:"url"`
+	Url    string `json:"url"`
 }
 
 // get top billboard songs
@@ -162,7 +163,7 @@ func updateBillBoardData(db *bolt.DB) error {
 		panic(err.Error())
 	}
 
-	songChan := make(chan  SongInfo, 100)
+	songChan := make(chan SongInfo, 100)
 
 	go func() {
 		for _, song := range songs {
@@ -179,7 +180,7 @@ func updateBillBoardData(db *bolt.DB) error {
 	return nil
 }
 
-func scheduleCron (db *bolt.DB) {
+func scheduleCron(db *bolt.DB) {
 	log.Println("Scheduling CRON Job")
 	gocron.Every(1).Day().Do(updateBillBoardData, db)
 	<-gocron.Start()
@@ -197,10 +198,13 @@ func main() {
 		return err
 	})
 
-	go updateBillBoardData(db)
-	go scheduleCron(db)
+	//go updateBillBoardData(db)
+	//go scheduleCron(db)
 
-	http.HandleFunc("/billboard", func(w http.ResponseWriter, r *http.Request) {
+	router := httprouter.New()
+
+	router.GET("/playlist/:url", func (w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		println("At url")
 		songs, err := getTopSongUrl(db)
 		if err != nil {
 			json.NewEncoder(w).Encode(err)
@@ -209,18 +213,19 @@ func main() {
 		json.NewEncoder(w).Encode(songs)
 	})
 
-	http.HandleFunc("/playlist",func(w http.ResponseWriter, r *http.Request) {
+	router.GET("/playlist", func (w http.ResponseWriter, r *http.Request,_ httprouter.Params) {
+		println("at Playlist")
 		json.NewEncoder(w).Encode([]Playlist{
 			Playlist{
-				Name: "Billboard Hot 100",
+				Name:   "Billboard Hot 100",
 				Author: "Billboard",
-				Url: "/billboard",
+				Url:    "/billboard",
 			},
 		})
 	})
 
 	log.Println("Server starting on port :8000 and route /billboard")
-	err = http.ListenAndServe(":8000", nil)
+	err = http.ListenAndServe(":8000", router)
 	if err != nil {
 		panic(err.Error())
 	}
