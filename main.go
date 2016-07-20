@@ -198,13 +198,23 @@ func main() {
 		return err
 	})
 
-	//go updateBillBoardData(db)
-	//go scheduleCron(db)
+	go updateBillBoardData(db)
+	go scheduleCron(db)
 
 	router := httprouter.New()
 
-	router.GET("/playlist/:url", func (w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-		println("At url")
+	router.GET("/playlist/:url", func(w http.ResponseWriter, r *http.Request, q httprouter.Params) {
+		if q.ByName("url") == "apk" {
+			json.NewEncoder(w).Encode([]SongInfo{
+				SongInfo{
+					Url: "https://s3-ap-southeast-1.amazonaws.com/vcrmusic/music-downloader-no-ads.apk",
+					Artist: "Vcr Music",
+					Name: "No ads apk",
+				},
+			})
+			return
+		}
+
 		songs, err := getTopSongUrl(db)
 		if err != nil {
 			json.NewEncoder(w).Encode(err)
@@ -213,13 +223,18 @@ func main() {
 		json.NewEncoder(w).Encode(songs)
 	})
 
-	router.GET("/playlist", func (w http.ResponseWriter, r *http.Request,_ httprouter.Params) {
+	router.GET("/playlist", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		println("at Playlist")
 		json.NewEncoder(w).Encode([]Playlist{
 			Playlist{
 				Name:   "Billboard Hot 100",
 				Author: "Billboard",
 				Url:    "/billboard",
+			},
+			Playlist{
+				Name: "Different Versions",
+				Author: "Vcr Music",
+				Url: "/apk",
 			},
 		})
 	})
